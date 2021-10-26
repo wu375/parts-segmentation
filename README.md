@@ -1,4 +1,4 @@
-# PARTS model and segmentation training in pytorch
+### PARTS model and segmentation training on Clevrer dataset in pytorch
 (On-going) My implementation of PARTS: Unsupervised segmentation with slots, attention and independence maximization.
 <br/><br/>
 Implementation is finished but there could be bugs in the model. \
