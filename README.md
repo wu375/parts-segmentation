@@ -1,4 +1,5 @@
 # PARTS model and segmentation training in pytorch
-My implementation of PARTS: Unsupervised segmentation with slots, attention and independence maximization \
-This is an ongoing implementation. \
-Training is unfinished, and there could be bugs in the model.
+(On-going) My implementation of PARTS: Unsupervised segmentation with slots, attention and independence maximization \
+<br\>
+Implementation is finished but there could be bugs in the model. \
+For example, training is very computationally intensive, which could be due to a bug somewhere.
