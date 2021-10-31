@@ -107,6 +107,16 @@ class TransformerEncoder(nn.Module):
 
         return x
 
+# def xy_grid(batch_size, width, height, cuda=False):
+#     x_grid = torch.linspace(-1, 1, steps=width)
+#     x_grid = x_grid.reshape((1, 1, width, 1))
+#     x_grid = x_grid.tile((batch_size, height, 1, 1))
+#     y_grid = torch.linspace(-1, 1, steps=height)
+#     y_grid = y_grid.reshape((1, height, 1, 1))
+#     y_grid = y_grid.tile((batch_size, 1, width, 1))
+#     if cuda:
+#         return x_grid.cuda(), y_grid.cuda()
+#     return x_grid, y_grid
 
 # TODO: to pytorch
 def build_grid(height, width):
@@ -119,7 +129,7 @@ def build_grid(height, width):
     grid = grid.astype(np.float32)
     grid = np.concatenate([grid, 1.0 - grid], axis=-1)
     grid = torch.tensor(grid) #.cuda()
-    return grid.cuda()
+    return grid
 
 class SpatialDecoder(nn.Module):
     def __init__(
@@ -152,14 +162,16 @@ class SpatialDecoder(nn.Module):
         cnn_layers = cnn_layers[:-1]
         self._cnns = nn.Sequential(*cnn_layers)
 
+        self.register_buffer('_grid', build_grid(self._height, self._width)) # (1, h, w, 4)
+
+
     def forward(self, slots):
         # slots: (batch, K, D_slot)
         batch_size, K = slots.shape[0], slots.shape[1]
         slots = slots.view(-1, slots.shape[-1])[:, None, None, :] # (batch*K, 1, 1, D_slot)
         slots = slots.expand(slots.shape[0], self._height, self._width, slots.shape[-1]) # (batch*K, h, w, D_slot)
 
-        grid = build_grid(self._height, self._width) # (1, h, w, 4)
-        grid = self._grid_projector(grid) # (1, h, w, D_slot)
+        grid = self._grid_projector(self._grid) # (1, h, w, D_slot)
 
         slots = slots + grid # (batch*K, h, w, D_slot)
         slots = slots.permute(0, 3, 1, 2) # (batch*K, D_slot, h, w)
@@ -214,6 +226,8 @@ class SlotAttention(nn.Module):
         super(SlotAttention, self).__init__()
 
         self._input_norm = nn.LayerNorm(input_size)
+        self._obs_norm = nn.LayerNorm(obs_channels)
+        self._out_norm = nn.LayerNorm(v_size)
 
         self._qk_size = qk_size
 
@@ -228,7 +242,8 @@ class SlotAttention(nn.Module):
         batch_size, h, w, c = obs.shape
 
         slots = self._input_norm(slots)
-        
+        obs = self._obs_norm(obs)
+
         k = self._k_linear(obs) # (batch, h, w, 2*D_slot)
         v = self._v_linear(obs) # (batch, h, w, 2*D_slot)
 
@@ -241,14 +256,27 @@ class SlotAttention(nn.Module):
         
         attentions = F.softmax(qk, dim=1) # (batch, K, h*w)
 
+        temp = attentions / attentions.sum(-1, keepdim=True)
+        temp = torch.matmul(temp, v.view(v.shape[0], v.shape[1]*v.shape[2], v.shape[3]))
+        temp = self._out_norm(temp)
+
         # attentions = torch.matmul(weights, v) 
         attentions = attentions.view(batch_size, h, w, -1) # (batch, h, w, K)
         spatial_logits = attentions.permute(0, 3, 1, 2)
-        attentions_v = torch.matmul(attentions.unsqueeze(4), v.unsqueeze(3)) # (batch, h, w, K, 2*D_slot)
-        attentions_v = attentions_v.sum(dim=(1,2)) # (batch, K, 2*D_slot)
-        attentions = attentions.sum(dim=(1,2)).unsqueeze(2) # (batch, K, 1)
 
-        slots = attentions_v / attentions # (batch, K, 2*D_slot)
+        # attentions_v = torch.matmul(attentions.unsqueeze(4), v.unsqueeze(3)) # (batch, h, w, K, 2*D_slot)
+        # attentions_v = attentions_v.sum(dim=(1,2)) # (batch, K, 2*D_slot)
+        # attentions = attentions.sum(dim=(1,2)).unsqueeze(2) # (batch, K, 1)
+
+        # slots = attentions_v / attentions # (batch, K, 2*D_slot)
+        # print(slots.shape)
+        # print(slots.sum())
+        # print(temp.shape)
+        # print(temp.sum())
+        # exit()
+
+        slots = temp
+
         return slots, spatial_logits
 
 
