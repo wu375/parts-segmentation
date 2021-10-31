@@ -3,3 +3,5 @@
 <br/><br/>
 Implementation is finished but there could be bugs in the model. \
 For example, training is very computationally intensive, which could be due to a bug somewhere.
+
+<img src="overfit.gif" width="200">
