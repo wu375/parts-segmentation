@@ -7,5 +7,5 @@ For example, I haven't successfully got disentangled representations (slots all 
 ground truth \
 <img src="gt.gif" width="200"> 
 
-reconstruction \
+reconstruction trained on a single image \
 <img src="overfit.gif" width="200">
