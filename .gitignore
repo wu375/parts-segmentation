@@ -1,0 +1,8 @@
+clevrer/
+spmot/
+__pycache__/
+train_log/
+*.png
+*.mp4
+*.npy
+*.pth

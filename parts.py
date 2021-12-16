@@ -7,8 +7,6 @@ import torch.distributions as D
 
 from networks import TransformerEncoder, SpatialDecoder, BottomUpEncoder, SlotAttention, build_mlp
 
-# from torchviz import make_dot
-
 class Parts(nn.Module):
     def __init__(
         self,
@@ -21,6 +19,7 @@ class Parts(nn.Module):
         decoder_var=0.09,
         decoder_hidden=512,
         rnn_hidden=256,
+        encoder_hidden=256,
         encoder_channel=256,
         beta=0.5,
         mode='segmentation',
@@ -42,6 +41,7 @@ class Parts(nn.Module):
         self._prediction_transformer = TransformerEncoder(
             input_size=D_slot*2,
             output_size=D_slot*2,
+            K=K,
             d_model=transformer_d_model, 
             n_layers=2,
         )
@@ -55,7 +55,8 @@ class Parts(nn.Module):
             cnn_hidden=decoder_hidden,
         )
 
-        self._encoder = BottomUpEncoder(input_size=3+1, output_size=encoder_channel)
+        assert encoder_hidden % 2 == 0, 'bottom up encoder hidden size should be divisible by 2'
+        self._encoder = BottomUpEncoder(input_size=3+1, output_size=encoder_channel, hidden_size=encoder_hidden)
 
         self._slot_attention = SlotAttention(
             input_size=4*D_slot,
@@ -86,7 +87,13 @@ class Parts(nn.Module):
     def _sample_z(self, mu, sigma):
         # mu: (batch, K, D_slot)
         # sigma: (batch, K, D_slot)
-        normal = D.Normal(mu, sigma)
+        try:
+            normal = D.Normal(mu, sigma)
+        except ValueError:
+            print(mu.mean())
+            print(mu.max())
+            print(mu.min())
+            exit('value error')
         normal = D.Independent(normal, reinterpreted_batch_ndims=2)
         z = normal.rsample() #.cuda() # (batch, K, D_slot)
         return z
@@ -96,22 +103,12 @@ class Parts(nn.Module):
         # C: (batch, K, 3, h, w)
         # m: (batch, K, 1, h, w)
 
-        # some_math = (1/math.sqrt(2*math.pi*var)) * (-m*((C - x.unsqueeze(1)) ** 2) / (2 * var)).exp() # (batch, K, 3, h, w)
-        # some_math = some_math.sum(dim=1, keepdim=True).log() #.sum(dim=2, keepdim=True) # (batch, 1, 3, h, w)
-        # logp_x_z = some_math.squeeze(1).sum(1, keepdim=True) # (batch, 1, h, w)
-        # some_math = some_math.view(some_math.shape[0], -1) # (batch, -1)
-        # nll = -some_math.sum(dim=-1).mean() # scaler
-        # print(nll)
-
         some_math = m * (1/math.sqrt(2*math.pi*var)) * (-((C - x.unsqueeze(1)) ** 2) / (2 * var)).exp() # (batch, K, 3, h, w)
         some_math = some_math.sum(dim=1, keepdim=True).log() #.sum(dim=2, keepdim=True) # (batch, 1, 3, h, w)
         logp_x_z = some_math.squeeze(1).sum(1, keepdim=True) # (batch, 1, h, w)
         some_math = some_math.view(some_math.shape[0], -1) # (batch, -1)
         nll = -some_math.sum(dim=-1).mean() # scaler
-        # print(nll)
-        # exit()
 
-        # nll = nn.MSELoss()(x, (C*m).sum(dim=1))
         return nll, logp_x_z
 
     def _kl_loss(self, mu, sigma):
@@ -121,7 +118,8 @@ class Parts(nn.Module):
         posterior = D.Independent(posterior, reinterpreted_batch_ndims=2)
         prior = D.Normal(torch.zeros_like(mu), torch.ones_like(sigma))
         prior = D.Independent(prior, reinterpreted_batch_ndims=2)
-        kld = D.kl_divergence(posterior, prior).sum()
+        kld = D.kl_divergence(posterior, prior) # (batch,)
+        kld = kld.mean()
         return kld
 
     def _forward_step(self, x, lamb_prev, hidden, detach_hidden, action=None, burn_in=False):
@@ -153,20 +151,10 @@ class Parts(nn.Module):
             z = self._sample_z(mu, sigma) # (batch, K, D_slot)
             recons, masks = self._spatial_decoder(z) # recons: (batch, K, 3, h, w), masks: (batch, K, 1, h, w)
 
-            # print(x.max())
-            # print(x.min())
-            # print(x.mean())
-            # print()
-            # for i in range(7):
-            #     print(recons[:, i].max())
-            #     print(recons[:, i].min())
-            #     print(recons[:, i].mean())
-            #     print()
-            # exit()
+            masks_entropy = -(masks * masks.log()).view(masks.shape[0], -1).sum(dim=-1)
+            masks_entropy = masks_entropy.mean()
 
             assert recons.shape[-2] == self._h and recons.shape[-1] == self._w, 'decoder paddings not same'
-            # recons = torch.rand(batch_size, self._K, 3, 64, 64).cuda()
-            # masks = torch.rand(batch_size, self._K, 1, 64, 64).cuda()
 
             loss_recon, logp_x_z = self._reconstruction_loss(x, recons, self._decoder_var, masks) # scaler, (batch, 1, h, w)
             loss_kl = self._kl_loss(mu, sigma)
@@ -179,18 +167,16 @@ class Parts(nn.Module):
                     lamb, 
                     retain_graph=refine_step==self._n_refine_steps-1,
                 )[0] # (batch, K, 2, D_slot)
-                # lamb_grad = torch.rand(batch_size, self._K, 2, self._D_slot).cuda()
-                # print(lamb_grad.shape)
-                # exit()
+
+                max_norm = 10.
+                norm_type = 2.
+                total_norm = torch.norm(lamb_grad.detach(), norm_type)
+                clip_coef = max_norm / (total_norm + 1e-6)
+                clip_coef_clamped = torch.clamp(clip_coef, max=1.0)
+                lamb_grad = lamb_grad * clip_coef_clamped.cuda()
+
                 lamb_grad = lamb_grad.view(batch_size, self._K, -1)
                 lamb_grad = self._grad_norm_layer(lamb_grad)
-                # print(lamb_grad.max())
-                # print(lamb_grad.min())
-                # print()
-                # lamb_grad = torch.clamp(lamb_grad, min=-10, max=10) # (batch, K, 2*D_slot)
-                # print(lamb_grad.max())
-                # print(lamb_grad.min())
-                # exit()
 
                 lamb = lamb.view(batch_size, self._K, -1) # (batch, K, 2*D_slot)
 
@@ -205,16 +191,11 @@ class Parts(nn.Module):
                 lamb_delta = self._lamb_update_mlp(lamb_delta_input) # (batch, K, 2*D_slot)
                 # lamb = lamb.detach() + lamb_delta.detach()
                 lamb = lamb + lamb_delta
-                # if self.training:
-                #     lamb.requires_grad = True
-                # lamb.retain_grad()
             else:
                 lamb = lamb.view(batch_size, self._K, -1).detach()
                 break
 
         if detach_hidden:
-            # if self.training:
-            #     lamb.requires_grad = True
             lamb = lamb.detach()
 
         if self._mode == 'segmentation' or burn_in:
@@ -223,6 +204,7 @@ class Parts(nn.Module):
                 'hidden': hidden,
                 'recons': (recons*masks).sum(dim=1), # (batch, 3, h, w)
                 'recons_slots': recons,
+                'masks_entropy': masks_entropy,
                 'seg_topdown': masks.argmax(dim=1).squeeze(1), # (batch, h, w)
                 'seg_bottomup': spatial_att_logits.argmax(dim=1), # (batch, h, w)
                 'loss': loss,
@@ -240,7 +222,7 @@ class Parts(nn.Module):
                 'loss_kl': loss_kl,
             }
 
-    def forward(self, x, hidden=None, optimizer=None, detach_period=4):
+    def forward(self, x, hidden=None, optimizer=None, detach_period=25):
         # x: (batch, time, c, h, w)
         batch_size, n_steps = x.shape[0], x.shape[1]
 
@@ -252,6 +234,7 @@ class Parts(nn.Module):
         loss_for_bp = []
         loss_recon = 0.
         loss_kl = 0.
+        masks_entropy = 0.
         recons = []
         recons_slots = []
         if self._mode == 'segmentation':
@@ -268,6 +251,7 @@ class Parts(nn.Module):
             loss_for_bp.append(out['loss'])
             loss_recon = loss_recon + out['loss_recon']
             loss_kl = loss_kl + out['loss_kl']
+            masks_entropy = masks_entropy + out['masks_entropy']
             recons.append(out['recons'])
             recons_slots.append(out['recons_slots'])
             if self._mode == 'segmentation':
@@ -275,28 +259,22 @@ class Parts(nn.Module):
                 seg_topdown.append(out['seg_topdown'])
                 seg_bottomup.append(out['seg_bottomup'])
             
-            if detach_hidden and optimizer is not None:
+            if (detach_hidden or t == n_steps - 1) and optimizer is not None:
                 # print('hello')
                 loss_for_bp = torch.stack(loss_for_bp).sum() / len(loss_for_bp)
-
-                # old_params = self.get_weights()
 
                 optimizer.zero_grad()
                 loss_for_bp.backward()
                 nn.utils.clip_grad_norm_(self.parameters(), 5)
                 optimizer.step()
 
-                # new_params = self.get_weights()
-                # for k in old_params:
-                #     print(k)
-                #     print((old_params[k] - new_params[k]).sum())
-                # exit()
                 loss_for_bp = []
                 # loss = loss.detach()
 
         loss = loss / n_steps
         loss_recon = loss_recon / n_steps
         loss_kl = loss_kl / n_steps
+        masks_entropy = masks_entropy / n_steps
         recons = torch.stack(recons, dim=1) # (batch, time, 3, h, w)
         recons_slots = torch.stack(recons_slots, dim=1)
 
@@ -310,6 +288,7 @@ class Parts(nn.Module):
                 'hidden': hidden,
                 'recons':recons,
                 'recons_slots': recons_slots,
+                'masks_entropy': masks_entropy,
                 'seg_topdown':seg_topdown,
                 'seg_bottomup':seg_bottomup,
                 'loss': loss,

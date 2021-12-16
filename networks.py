@@ -94,29 +94,19 @@ class TransformerEncoder(nn.Module):
             self,
             input_size,
             output_size,
+            K=7,
             d_model=1024,
             n_layers=2,
     ):
         super(TransformerEncoder, self).__init__()
 
-        self._layers = nn.ModuleList([AttentionLayer(input_size=input_size, output_size=output_size, d_model=d_model) for _ in range(n_layers)])
+        self._layers = nn.ModuleList([AttentionLayer(input_size=input_size, output_size=output_size, d_model=d_model, input_len=K) for _ in range(n_layers)])
 
     def forward(self, x):
         for layer in self._layers:
             x = layer(x)
 
         return x
-
-# def xy_grid(batch_size, width, height, cuda=False):
-#     x_grid = torch.linspace(-1, 1, steps=width)
-#     x_grid = x_grid.reshape((1, 1, width, 1))
-#     x_grid = x_grid.tile((batch_size, height, 1, 1))
-#     y_grid = torch.linspace(-1, 1, steps=height)
-#     y_grid = y_grid.reshape((1, height, 1, 1))
-#     y_grid = y_grid.tile((batch_size, 1, width, 1))
-#     if cuda:
-#         return x_grid.cuda(), y_grid.cuda()
-#     return x_grid, y_grid
 
 # TODO: to pytorch
 def build_grid(height, width):
@@ -130,6 +120,7 @@ def build_grid(height, width):
     grid = np.concatenate([grid, 1.0 - grid], axis=-1)
     grid = torch.tensor(grid) #.cuda()
     return grid
+
 
 class SpatialDecoder(nn.Module):
     def __init__(
@@ -191,11 +182,12 @@ class BottomUpEncoder(nn.Module):
             self,
             input_size,
             output_size,
+            hidden_size,
     ):
         super(BottomUpEncoder, self).__init__()
 
-        in_channels = [input_size, 64, 128, 128, output_size]
-        out_channels = [64, 128, 128, output_size, output_size]
+        in_channels = [input_size, hidden_size//2, hidden_size, hidden_size, output_size]
+        out_channels = [hidden_size//2, hidden_size, hidden_size, output_size, output_size]
         cnn_layers = []
         for in_channel, out_channel in zip(in_channels, out_channels):
             cnn_layers.append(nn.Conv2d(
@@ -263,17 +255,6 @@ class SlotAttention(nn.Module):
         # attentions = torch.matmul(weights, v) 
         attentions = attentions.view(batch_size, h, w, -1) # (batch, h, w, K)
         spatial_logits = attentions.permute(0, 3, 1, 2)
-
-        # attentions_v = torch.matmul(attentions.unsqueeze(4), v.unsqueeze(3)) # (batch, h, w, K, 2*D_slot)
-        # attentions_v = attentions_v.sum(dim=(1,2)) # (batch, K, 2*D_slot)
-        # attentions = attentions.sum(dim=(1,2)).unsqueeze(2) # (batch, K, 1)
-
-        # slots = attentions_v / attentions # (batch, K, 2*D_slot)
-        # print(slots.shape)
-        # print(slots.sum())
-        # print(temp.shape)
-        # print(temp.sum())
-        # exit()
 
         slots = temp
 
