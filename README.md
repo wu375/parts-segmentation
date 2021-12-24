@@ -4,6 +4,7 @@
 <br/><br/>
 I'm still debugging the model (help is welcomed of course). \
 The model is currently largely downscaled and tested on the Sprites-MOT dataset from [here](https://github.com/ecker-lab/object-centric-representation-benchmark)
+Training is very unstable: sometimes representations will be disentangled, sometimes not; sometimes colors and shapes can be learned, sometimes not; sometimes the model will suddenly collapse to nonsense outputs. It is also very sensitive to beta.
 
 <div>Ground truth<br/><img width="150" alt="" src="/images/gt1.gif"></div> <div>Reconstruction<br/><img width="150" alt="" src="/images/recon1.gif"></div><br/><br/>
 
