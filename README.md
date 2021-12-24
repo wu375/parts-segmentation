@@ -4,3 +4,7 @@
 <br/><br/>
 I'm still debugging the model (help is welcomed of course). \
 The model is currently largely downscaled and tested on the Sprites-MOT dataset from [here](https://github.com/ecker-lab/object-centric-representation-benchmark)
+
+<img width="150" alt="" src="/images/gt1.gif">
+<img width="150" alt="" src="/images/recon1.gif">
+<img width="150" alt="" src="/images/0_1.gif"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <img width="150" alt="" src="/images/1_1.gif"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <img width="150" alt="" src="/images/2_1.gif"> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <img width="150" alt="" src="/images/3_1.gif">
